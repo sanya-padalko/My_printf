@@ -1,18 +1,30 @@
+extern printf
+
+%macro save_char_func 2
+	mov qword [spec_jump_table + %1 * 8], %2
+%endmacro
 section .data
 	hex_begin	db '0x'
 	oct_begin 	db '0q'
 	bin_begin 	db '0b'
-	hex_alp 	db '0123456789ABCDEF'
+	hex_alp 	db '0123456789abcdef'
 	number		times 0x21 db '0'
 	digit_bit_size	dd 1
 	minus 		db '-'
 	dec_dig_cnt 	db 0
 	loop_cnt 	db 0
 
+section .data
+spec_jump_table:
+	times 256 dq wrong_spec
+
 section .text
 	global my_printf
 	global my_printf_cdecl
 
+;=====================================================
+; my_print в формате stdcall
+;=====================================================
 my_printf:				
 	pop rax				; сохраняем адрес возврата
 	sub  rsp, 	8 * 6		; сохраняем 6 аргументов (трамплин)
@@ -37,7 +49,12 @@ my_printf:
 	pop r9
 	push rax
 	ret
+;-----------------------------------------------------
 
+
+;=====================================================
+; my_printf в формате cdecl
+;=====================================================
 my_printf_cdecl:
 	push rbp
 	mov  rbp, rsp
@@ -46,6 +63,8 @@ my_printf_cdecl:
 	push r13			; r10 -> используется для аргументов при системных вызовах
 	push r14
 	push r15
+
+	call jump_table_init
 
 	mov  r12, [rbp + 8 * 3]		; форматная строка (до rbp и 2-x адресов возврата) 
 	lea  r13, [rbp + 8 * 4]		; 2-й и остальные аргументы
@@ -70,29 +89,97 @@ my_printf_cdecl:
 
 .percent:
 	inc r12
-	mov dl, [r12]
-	cmp dl, '%'
-	je .print_percent
-	cmp dl, 'c'
-	je .print_char
-	mov byte [digit_bit_size], 4
-	cmp dl, 'x'
-	je .print_bin
-	dec byte [digit_bit_size]
-	cmp dl, 'o'
-	je .print_bin
-	sub byte [digit_bit_size], 2
-	cmp dl, 'b'
-	je .print_bin
-	cmp dl, 'd'
-	je .print_dec
-	cmp dl, 's'
-	je .print_string
-
-	inc r12
+	xor rdx, rdx
+	mov dl, [r12]				; заменить на movzx
+	call qword [spec_jump_table + rdx * 8]
 	jmp .loop
 
-.print_percent:
+.printf_end:
+	call std_printf
+
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbx
+	pop rbp
+	ret
+;------------------------------------------------------
+
+
+;======================================================
+; Выводит строку с помощью библиотечного printf
+;
+; Expected:	rbp + 8 * 3 - 1-й аргумент
+;======================================================
+std_printf:
+	mov rdi, [rbp + 8 * 3]			; в rdi форматная строка
+	lea rbx, [rbp + 8 * 4]			; адрес 2-го аргумента
+	sub r13, rbx				; r13 = количество аргументов * 8
+	sub r13, 8 * 5
+
+	mov rsi, [rbx]				; 2-й
+	mov rdx, [rbx + 8]			; 3-й
+	mov rcx, [rbx + 8 * 2]			; 4-й
+	mov r8,  [rbx + 8 * 3]			; 5-й
+	mov r9,  [rbx + 8 * 4]			; 6-й
+	add rbx, 8 * 4
+	xor r15, r15
+
+.save_arg:
+	cmp r13, 0
+	jle .call_printf
+
+	push qword [rbx + r13]
+	inc r15
+
+	sub r13, 8
+	jmp .save_arg
+
+.call_printf:
+	xor rax, rax
+	call printf
+
+.clear_stack:
+	cmp r15, 0
+	je .end_clear
+	pop rax
+	dec r15
+	jmp .clear_stack
+
+.end_clear:
+	ret
+;------------------------------------------------------
+
+
+;======================================================
+; Заполняем jump-table
+;======================================================
+jump_table_init:
+	save_char_func '%', print_percent
+	save_char_func 'c', print_char
+	save_char_func 'x', wrap_print_hex
+	save_char_func 'o', wrap_print_oct
+	save_char_func 'b', wrap_print_bin
+	save_char_func 'd', print_dec
+	save_char_func 's', print_string
+	ret
+;------------------------------------------------------
+
+
+;======================================================
+; Неверный спецификатор
+;======================================================
+wrong_spec:
+	inc r12
+	ret
+;------------------------------------------------------
+
+
+;======================================================
+; Вывод '%'
+;======================================================
+print_percent:
 	mov rax, 1
 	mov rdi, 1
 	mov rsi, r12		; [r12] = второй '%'
@@ -100,14 +187,20 @@ my_printf_cdecl:
 	syscall
 
 	inc r12
-	jmp .loop
+	ret
+;-----------------------------------------------------
 
-.print_char:
+
+;=====================================================
+; Вывод %c
+;=====================================================
+print_char:
 	mov rax, [r13]
 	cmp rax, 0xff
 	jbe .right_char
-	inc r12			; ничего не выводим
-	jmp .loop
+	add r13, 8
+	inc r12			; ничего не выводим, если неправильный char
+	ret
 
 .right_char:
 	mov rax, 1
@@ -118,16 +211,51 @@ my_printf_cdecl:
 
 	add r13, 8
 	inc r12
-	jmp .loop
+	ret
+;-----------------------------------------------------
 
-.print_bin:
+
+;=====================================================
+; print_hex трамплин
+;=====================================================
+wrap_print_hex:
+	mov byte [digit_bit_size], 4
+	call print_bin
+	ret
+;-----------------------------------------------------
+
+
+;=====================================================
+; print_oct-трамплин
+;=====================================================
+wrap_print_oct:
+	mov byte [digit_bit_size], 3
+	call print_bin
+	ret
+;-----------------------------------------------------
+
+
+;=====================================================
+; print_bin-трамплин
+;=====================================================
+wrap_print_bin:
+	mov byte [digit_bit_size], 1
+	call print_bin
+	ret
+;-----------------------------------------------------
+
+
+;=====================================================
+; Вывод числа в системе счисления, равной степени двойки
+;=====================================================
+print_bin:
 	mov rdi, number
 	add rdi, 0x20
 	mov rax, [r13]
 	add r13, 8
 	xor rdx, rdx
 
-.save_bin_dig:
+.save_dig:
 	push rax
 	mov cl, 0x40
 	sub cl, byte [digit_bit_size]
@@ -142,7 +270,7 @@ my_printf_cdecl:
 	shr rax, cl
 	inc rdx
 	cmp rax, 0
-	jne .save_bin_dig
+	jne .save_dig
 
 .print_digs:
 	inc rdi
@@ -152,9 +280,14 @@ my_printf_cdecl:
 	syscall
 
 	inc r12
-	jmp .loop
+	ret
+;-----------------------------------------------------
 
-.print_dec:
+
+;=====================================================
+; Вывод десятичного числа
+;=====================================================
+print_dec:
 	mov rax, [r13]
 	cmp rax, 0
 	jne .not_null
@@ -166,7 +299,7 @@ my_printf_cdecl:
 
 	add r13, 8
 	inc r12
-	jmp .loop
+	ret
 
 .not_null:
 	cmp rax, 0
@@ -206,9 +339,14 @@ my_printf_cdecl:
 
 	add r13, 8
 	inc r12
-	jmp .loop
+	ret
+;-----------------------------------------------------
 
-.print_string:
+
+;=====================================================
+; Вывод строки
+;=====================================================
+print_string:
 	mov rcx, [r13]
 	add r13, 8
 	xor rdx, rdx
@@ -228,13 +366,5 @@ my_printf_cdecl:
 	syscall
 
 	inc r12
-	jmp .loop
-
-.printf_end:
-	pop r15
-	pop r14
-	pop r13
-	pop r12
-	pop rbx
-	pop rbp
 	ret
+;-----------------------------------------------------
