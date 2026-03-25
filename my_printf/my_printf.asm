@@ -288,8 +288,9 @@ print_bin:
 ; Вывод десятичного числа
 ;=====================================================
 print_dec:
-	mov rax, [r13]
-	cmp rax, 0
+	xor rax, rax
+	mov eax, [r13]
+	cmp eax, 0
 	jne .not_null
 	mov rax, 1
 	mov rdi, 1
@@ -302,7 +303,7 @@ print_dec:
 	ret
 
 .not_null:
-	cmp rax, 0
+	cmp eax, 0
 	jg .positive
 	mov rax, 1
 	mov rdi, 1
@@ -310,8 +311,8 @@ print_dec:
 	mov rdx, 1
 	syscall
 
-	mov rax, [r13]
-	neg rax
+	mov eax, [r13]
+	neg eax
 
 .positive:
 	mov byte [dec_dig_cnt], 0
@@ -326,7 +327,7 @@ print_dec:
 	mov byte [rdi], cl
 	dec rdi
 	inc byte [dec_dig_cnt]
-	cmp rax, 0
+	cmp eax, 0
 	jne .print_dec_dig
 
 	inc rdi				; вывод полученного числа
