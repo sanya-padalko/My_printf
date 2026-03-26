@@ -46,7 +46,7 @@ while true; do
 
 		link)
 			echo -e "${YELLOW} Start linking \"${NAME}.o\"...${RESET}"
-			gcc -no-pie ${NAME}.o ../test.c -o ${NAME} -g
+			gcc -no-pie -Wl,--no-warn-execstack ${NAME}.o ../test.c -o ${NAME} -g
 			if [[ $? -eq 0 ]]; then
 				echo -e "${GREEN} Linked successfully, file \"${NAME}\" saved ${RESET}"
 			else
@@ -61,7 +61,7 @@ while true; do
 
 		comp)
 			echo -e "${YELLOW} Start compiling \"${NAME}.asm\"... ${RESET}"
-			nasm -f elf64 ${NAME}.asm -g -F dwarf -l ${NAME}.lst -o ${NAME}.o && gcc -no-pie ${NAME}.o ../test.c -o ${NAME} -g
+			nasm -f elf64 ${NAME}.asm -g -F dwarf -l ${NAME}.lst -o ${NAME}.o && gcc -no-pie -Wl,--no-warn-execstack ${NAME}.o ../test.c -o ${NAME} -g
 			if [[ $? -eq 0 ]]; then
 				echo -e "${GREEN} Compilated successfully, file \"${NAME}\" saved ${RESET}"
 			else
@@ -92,12 +92,12 @@ while true; do
 				continue
 			fi
 
-			gcc -no-pie ${NAME}.o ../test.c -o ${NAME} -g
+			gcc -no-pie -Wl,--no-warn-execstack ${NAME}.o ../test.c -o ${NAME} -g
 			if [[ $? -eq 0 ]]; then
 				echo -e "${GREEN} Successfully linked, file \"${NAME}\" saved... ${RESET}"
 			else
 				error=$?
-				echo -e "${RED} Linking faildd, exit code: ${error}"
+				echo -e "${RED} Linking faildd, exit code: ${error} ${RESET}"
 				continue
 			fi
 
